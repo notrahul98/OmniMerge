@@ -49,11 +49,6 @@ export function consolidateTrialBalances(
       );
 
       if (matching) {
-        const companyKey = mapped.company
-          .toLowerCase()
-          .replace(/\s+/g, "");
-        const company1Key = Object.keys(balances)[0]; // company1, company2, etc.
-
         // Find the right company key
         trialBalances.forEach((tb, idx) => {
           if (tb.companyName === mapped.company) {
@@ -78,9 +73,6 @@ export function consolidateTrialBalances(
   // Apply eliminations
   let totalEliminations = 0;
   eliminations.forEach((elim) => {
-    const debitAcc = consolidatedMap.values();
-    const creditAcc = consolidatedMap.values();
-
     // Find and update elimination amounts
     consolidatedMap.forEach((acc) => {
       if (acc.standardAccountName === elim.debitAccount) {

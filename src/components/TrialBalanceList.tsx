@@ -1,4 +1,3 @@
-import React from "react";
 import { TrialBalance } from "../types";
 import { Trash2, FileText } from "lucide-react";
 import { format } from "date-fns";

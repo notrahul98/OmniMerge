@@ -1,13 +1,10 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useTrialBalance } from "./hooks/useTrialBalance";
 import { useConsolidation } from "./hooks/useConsolidation";
 import { useExport } from "./hooks/useExport";
 import FileUpload from "./components/FileUpload";
 import TrialBalanceList from "./components/TrialBalanceList";
-import {
-  generateFinancialStatements,
-  calculateRatios,
-} from "./utils/financial-statements";
+import { generateFinancialStatements } from "./utils/financial-statements";
 import { formatCurrency } from "./utils/financial-statements";
 import { AlertCircle, CheckCircle2, Download, FileDown } from "lucide-react";
 import { format } from "date-fns";
@@ -16,7 +13,6 @@ type Step = "upload" | "mapping" | "consolidation" | "export";
 
 export default function App() {
   const [currentStep, setCurrentStep] = useState<Step>("upload");
-  const [mappingSaved, setMappingSaved] = useState(false);
 
   const trialBalance = useTrialBalance();
   const consolidation = useConsolidation(trialBalance.trialBalances);
@@ -26,7 +22,6 @@ export default function App() {
 
   const handleInitializeMapping = () => {
     consolidation.initializeAutoMappings();
-    setMappingSaved(true);
   };
 
   const handleDownloadExcel = async () => {
