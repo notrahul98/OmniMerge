@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo } from "react";
 import {
   TrialBalance,
   AccountMapping,
-  ConsolidatedTrialBalance,
   EliminationEntry,
 } from "../types";
 import {
@@ -19,7 +18,7 @@ export function useConsolidation(trialBalances: TrialBalance[]) {
     new Map()
   );
   const [eliminations, setEliminations] = useState<EliminationEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
 
   // Auto-detect mappings when trial balances change
   const autoMappings = useMemo(() => {
@@ -34,7 +33,7 @@ export function useConsolidation(trialBalances: TrialBalance[]) {
 
   const initializeAutoMappings = useCallback(() => {
     setMappings(autoMappings);
-    setError(null);
+    setManualError(null);
   }, [autoMappings]);
 
   const loadSavedMapping = useCallback((mappingId: string) => {
@@ -46,12 +45,12 @@ export function useConsolidation(trialBalances: TrialBalance[]) {
           map.set(m.id, m);
         });
         setMappings(map);
-        setError(null);
+        setManualError(null);
       } else {
-        setError("Failed to load mapping");
+        setManualError("Failed to load mapping");
       }
     } catch (err) {
-      setError(
+      setManualError(
         err instanceof Error ? err.message : "Failed to load mapping"
       );
     }
@@ -89,33 +88,33 @@ export function useConsolidation(trialBalances: TrialBalance[]) {
     setEliminations([]);
   }, []);
 
-  const consolidate = useCallback(() => {
+  const { consolidated, error: computedError } = useMemo(() => {
+    if (trialBalances.length === 0) {
+      return { consolidated: null, error: "No trial balances loaded" };
+    }
+
+    if (mappings.size === 0) {
+      return {
+        consolidated: null,
+        error: "No account mappings defined. Please auto-detect or create mappings.",
+      };
+    }
+
     try {
-      if (trialBalances.length === 0) {
-        setError("No trial balances loaded");
-        return null;
-      }
-
-      if (mappings.size === 0) {
-        setError("No account mappings defined. Please auto-detect or create mappings.");
-        return null;
-      }
-
-      const consolidated = consolidateTrialBalances(
+      const result = consolidateTrialBalances(
         trialBalances,
         mappings,
         eliminations
       );
-
-      setError(null);
-      return consolidated;
+      return { consolidated: result, error: null as string | null };
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to consolidate";
-      setError(message);
-      return null;
+      return { consolidated: null, error: message };
     }
   }, [trialBalances, mappings, eliminations]);
+
+  const error = manualError ?? computedError;
 
   const detectIntercompany = useCallback(() => {
     try {
@@ -138,7 +137,7 @@ export function useConsolidation(trialBalances: TrialBalance[]) {
     removeElimination,
     updateElimination,
     clearEliminations,
-    consolidate,
+    consolidated,
     detectIntercompany,
   };
 }

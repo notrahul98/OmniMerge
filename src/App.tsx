@@ -16,7 +16,7 @@ export default function App() {
 
   const trialBalance = useTrialBalance();
   const consolidation = useConsolidation(trialBalance.trialBalances);
-  const consolidated = consolidation.consolidate();
+  const consolidated = consolidation.consolidated;
   const statements = consolidated ? generateFinancialStatements(consolidated) : null;
   const exportHook = useExport(consolidated);
 
