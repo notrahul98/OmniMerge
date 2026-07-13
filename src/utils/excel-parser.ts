@@ -1,32 +1,35 @@
 import * as XLSX from "xlsx";
 import { TrialBalance, Account } from "../types";
 
-interface RawRow {
-  [key: string]: string | number | undefined;
-}
+type RawCell = string | number | undefined;
 
 export async function parseExcelFile(file: File): Promise<TrialBalance> {
   const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { header: 1 });
+  const workbook = XLSX.read(arrayBuffer);
 
   if (!workbook.SheetNames.length) {
     throw new Error("Excel file contains no sheets");
   }
 
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const data = XLSX.utils.sheet_to_json<RawRow>(sheet, { defval: "" });
+  const rawData = XLSX.utils.sheet_to_json<RawCell[]>(sheet, {
+    header: 1,
+    defval: "",
+  });
 
-  if (data.length < 2) {
+  if (rawData.length < 2) {
     throw new Error("Excel file does not contain enough data");
   }
 
-  // Extract company name and period from header rows
-  const rawData = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 }) as string[][];
   const companyName = extractCompanyName(rawData);
   const period = extractPeriod(rawData);
+  const accounts = parseAccounts(rawData);
 
-  // Parse accounts from data rows
-  const accounts = parseAccounts(data);
+  if (accounts.length === 0) {
+    throw new Error(
+      "Could not find any account rows. Make sure the sheet has a 'Particulars' column with account names."
+    );
+  }
 
   return {
     companyName,
@@ -35,7 +38,7 @@ export async function parseExcelFile(file: File): Promise<TrialBalance> {
   };
 }
 
-function extractCompanyName(rawData: string[][]): string {
+function extractCompanyName(rawData: RawCell[][]): string {
   // Look for company name in first few rows
   for (let i = 0; i < Math.min(5, rawData.length); i++) {
     const row = rawData[i];
@@ -49,7 +52,7 @@ function extractCompanyName(rawData: string[][]): string {
   return "Unknown Company";
 }
 
-function extractPeriod(rawData: string[][]): { from: Date; to: Date } {
+function extractPeriod(rawData: RawCell[][]): { from: Date; to: Date } {
   const now = new Date();
   const defaultFrom = new Date(now.getFullYear(), now.getMonth(), 1);
   const defaultTo = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -61,14 +64,10 @@ function extractPeriod(rawData: string[][]): { from: Date; to: Date } {
       const rowText = row.join(" ");
       const dateMatch = rowText.match(/(\d{1,2})-(\w+)-(\d{2,4})/g);
       if (dateMatch && dateMatch.length >= 2) {
-        try {
-          const from = parseDate(dateMatch[0]);
-          const to = parseDate(dateMatch[1]);
-          if (from && to) {
-            return { from, to };
-          }
-        } catch (e) {
-          // Continue to next row
+        const from = parseDate(dateMatch[0]);
+        const to = parseDate(dateMatch[1]);
+        if (from && to) {
+          return { from, to };
         }
       }
     }
@@ -107,63 +106,79 @@ function parseDate(dateStr: string): Date | null {
   return new Date(fullYear, month, day);
 }
 
-function parseAccounts(data: RawRow[]): Account[] {
-  const accounts: Account[] = [];
+/**
+ * Tally trial balance exports have several title rows (company name, period,
+ * repeated company/period) before the real column header row, and the header
+ * itself is often split across two rows via merged cells (e.g. "Opening" on
+ * one row, "Balance" directly below it). sheet_to_json's default "first row
+ * is the header" behavior can't handle that, so we locate the "Particulars"
+ * label ourselves and read data by fixed column position from there.
+ */
+function findDataStartRow(rawData: RawCell[][]): number {
+  let headerRowIndex = -1;
 
-  data.forEach((row, index) => {
-    // Skip empty rows
+  for (let i = 0; i < rawData.length; i++) {
+    const row = rawData[i];
     if (
-      !row.Particulars &&
-      !row["Account Name"] &&
-      !row.Account &&
-      !row.name
+      row?.some(
+        (cell) => typeof cell === "string" && cell.trim().toLowerCase() === "particulars"
+      )
     ) {
-      return;
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  if (headerRowIndex === -1) {
+    // No recognizable header found; assume there is no title-row preamble.
+    return 0;
+  }
+
+  let dataStart = headerRowIndex + 1;
+  // Skip any secondary header row(s) (e.g. "Balance | Debit | Credit | Balance")
+  // which are identifiable by having no value in the Particulars column.
+  while (
+    dataStart < rawData.length &&
+    (rawData[dataStart]?.[0] === undefined ||
+      String(rawData[dataStart][0]).trim().length === 0)
+  ) {
+    dataStart++;
+  }
+
+  return dataStart;
+}
+
+function parseAccounts(rawData: RawCell[][]): Account[] {
+  const accounts: Account[] = [];
+  const dataStart = findDataStartRow(rawData);
+
+  for (let i = dataStart; i < rawData.length; i++) {
+    const row = rawData[i];
+    if (!row) continue;
+
+    const rawName = row[0];
+    const accountName = typeof rawName === "string" ? rawName.trim() : "";
+
+    if (!accountName) {
+      continue;
     }
 
-    const accountName =
-      (row.Particulars as string) ||
-      (row["Account Name"] as string) ||
-      (row.Account as string) ||
-      (row.name as string) ||
-      "";
+    const opening = parseNumber(row[1]);
+    const debit = parseNumber(row[2]);
+    const credit = parseNumber(row[3]);
+    const closing = parseNumber(row[4]);
 
-    if (!accountName || accountName.trim().length === 0) {
-      return;
-    }
-
-    const opening =
-      parseNumber(row["Opening Balance"] || row.Opening || row["Opening Bl."]) || 0;
-    const debit =
-      parseNumber(
-        row.Debit ||
-          row["Debit Transactions"] ||
-          row["Debit Amt"] ||
-          row.Dr
-      ) || 0;
-    const credit =
-      parseNumber(
-        row.Credit ||
-          row["Credit Transactions"] ||
-          row["Credit Amt"] ||
-          row.Cr
-      ) || 0;
-    const closing =
-      parseNumber(row["Closing Balance"] || row.Closing || row["Closing Bl."]) || 0;
-
-    const account: Account = {
-      accountId: `acc_${index}`,
-      name: accountName.trim(),
+    accounts.push({
+      accountId: `acc_${i}`,
+      name: accountName,
       category: inferCategory(accountName),
       openingBalance: opening,
       debitTransactions: debit,
       creditTransactions: credit,
       closingBalance: closing,
-      level: inferLevel(accountName),
-    };
-
-    accounts.push(account);
-  });
+      level: inferLevel(String(rawName ?? "")),
+    });
+  }
 
   return buildHierarchy(accounts);
 }
@@ -174,7 +189,7 @@ function parseNumber(value: unknown): number {
   }
 
   if (typeof value === "string") {
-    // Remove currency symbols and spaces
+    // Remove currency symbols/letters (e.g. trailing "Dr"/"Cr") and thousands separators
     const cleaned = value
       .replace(/[A-Za-z\s]/g, "")
       .replace(/,/g, "")
@@ -207,7 +222,7 @@ function inferCategory(
     name.includes("loan") ||
     name.includes("creditor") ||
     name.includes("payable") ||
-    name.includes("liability")
+    name.includes("liabilit") // matches both "liability" and "liabilities"
   ) {
     return "Liability";
   }
@@ -237,7 +252,6 @@ function inferCategory(
     name.includes("expense") ||
     name.includes("cost") ||
     name.includes("tax") ||
-    name.includes("fee") ||
     name.includes("admin")
   ) {
     return "Expense";
